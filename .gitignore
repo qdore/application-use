@@ -1,0 +1,3 @@
+bin/
+.DS_Store
+internal/cgo/macos/appuse_bridge/libappuse_bridge.a
