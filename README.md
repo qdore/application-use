@@ -13,6 +13,37 @@ By operating at the OS level, it retrieves a highly structured view of the UI in
 - **AI-Optimized Interface**: Converts visual spatial information into structured text representations (snapshots with alphabet hints like `JK`). LLMs can instantly map these hints back to specific actions.
 - **Fast & Lightweight**: Built meticulously with Go and Swift (via CGO bridge) for maximum native performance without heavy dependencies.
 
+
+## Installation
+
+### Global Installation (recommended)
+
+Installs the native execution binary directly from NPM:
+
+```bash
+npm install -g application-use@latest
+```
+
+### AI Coding Assistants (recommended)
+
+Add the skill to your AI coding assistant for richer context:
+
+```bash
+npx skills add qdore/application-use
+```
+
+### From Source (macOS)
+
+Dependencies: Go (1.20+) and Xcode Command Line Tools.
+
+```bash
+git clone <repository-url>
+cd application-use
+
+# Build the Swift static bridge and Go executable
+make clean && make
+```
+
 ## Quick Start
 
 ```bash
@@ -65,23 +96,6 @@ Instead of relying on fragile coordinate clicks (`x,y`), **application-use** imp
    - `(+)` markers indicate pure text elements.
    - `(*)` markers indicate elements discovered primarily via OCR.
 3. **Interact**: The LLM issues a command like `application-use click JK` or `application-use fill AB "admin"`. The CLI uses OS-level handles to instantly perform the action.
-
-## Installation
-
-### From Source (macOS)
-
-Dependencies: Go (1.20+) and Xcode Command Line Tools.
-
-```bash
-git clone <repository-url>
-cd application-use
-
-# Build the Swift static bridge and Go executable
-make clean && make
-
-# Make it available globally (example)
-sudo mv application-use /usr/local/bin/
-```
 
 ## Security & Permissions
 
