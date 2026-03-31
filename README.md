@@ -105,3 +105,7 @@ Because `application-use` interacts natively with OS controls and visual outputs
 2. **Screen Recording**: `System Settings > Privacy & Security > Screen Recording` (required for Vision OCR and taking snapshots)
 
 If permissions are missing, the CLI will output specialized error prompts instructing the user to enable them.
+
+## Contributing
+
+Currently, `application-use` is designed for macOS. We welcome pull requests to add support for other operating systems (Windows, Linux, etc.).
