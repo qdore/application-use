@@ -1,7 +1,7 @@
 package appuse_bridge
 
 /*
-#cgo LDFLAGS: -L${SRCDIR} ${SRCDIR}/libappuse_bridge.a -framework Foundation -framework AppKit -framework ApplicationServices
+#cgo LDFLAGS: -L${SRCDIR} ${SRCDIR}/libappuse_bridge.a -framework Foundation -framework AppKit -framework ApplicationServices -framework CoreML
 #include <stdlib.h>
 #include <stdbool.h>
 
