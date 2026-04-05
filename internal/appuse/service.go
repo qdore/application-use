@@ -228,6 +228,13 @@ func FindHint(hint string, targetAppName string) (float64, float64, bool) {
 		}
 	}
 
+	// Search in Icon elements
+	for _, icon := range resp.IconElements {
+		if strings.ToUpper(icon.Hint) == hint {
+			return icon.Frame.X + icon.Frame.Width/2, icon.Frame.Y + icon.Frame.Height/2, true
+		}
+	}
+
 	return 0, 0, false
 }
 

@@ -837,20 +837,6 @@ public func clear_appuse_snapshot() {
 public func click_at(x: Double, y: Double) {
     let point = CGPoint(x: x, y: y)
     print("Clicking at: \(point)")
-    
-    // 1. Try AXPress first
-    let systemWide = AXUIElementCreateSystemWide()
-    var element: AXUIElement?
-    if AXUIElementCopyElementAtPosition(systemWide, Float(x), Float(y), &element) == .success,
-       let target = element {
-        let result = AXUIElementPerformAction(target, kAXPressAction as CFString)
-        if result == .success {
-            print("AXPress success at \(point)")
-            return
-        }
-    }
-    
-    // 2. Fallback to raw mouse click
     mouseClick(at: point)
 }
 
