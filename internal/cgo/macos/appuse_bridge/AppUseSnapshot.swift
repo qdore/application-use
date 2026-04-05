@@ -2,6 +2,7 @@ import Cocoa
 import ApplicationServices
 import Foundation
 import Vision
+import CoreML
 
 // MARK: - Core Types
 
@@ -192,10 +193,12 @@ class ScreenOCR {
     
     private var cachedResults: [(text: String, frame: NSRect)] = []
     private var hasPerformedOCR = false
+    private(set) var lastCapturedImage: CGImage?
     
     func reset() {
         cachedResults = []
         hasPerformedOCR = false
+        lastCapturedImage = nil
     }
     
     /// Synchronously performs a single-pass OCR on the specified window frame.
@@ -217,6 +220,7 @@ class ScreenOCR {
         guard let cgImage = CGWindowListCreateImage(rect, .optionOnScreenOnly, kCGNullWindowID, .boundsIgnoreFraming) else {
             return
         }
+        lastCapturedImage = cgImage
         
         // Save to current_position.png for caching/UI purposes
         let nsImage = NSImage(cgImage: cgImage, size: NSSize(width: winW, height: winH))
@@ -293,6 +297,156 @@ class ScreenOCR {
 /// Fallback to OCR the screen region covered by `frame` (AX coordinate space).
 func ocrElementFrame(_ frame: NSRect) -> String {
     return ScreenOCR.shared.textAt(frame: frame)
+}
+
+// MARK: - CoreML Icon Detection
+
+class IconDetector {
+    static let shared = IconDetector()
+    
+    private var vnModel: VNCoreMLModel?
+    private var cachedResults: [(confidence: Float, frame: NSRect)] = []
+    private var hasPerformed = false
+    
+    private init() {
+        loadModel()
+    }
+    
+    private func loadModel() {
+        // Check environment variable first
+        if let envPath = ProcessInfo.processInfo.environment["ICON_DETECT_MODEL_PATH"] {
+            if tryLoadModel(at: envPath) { return }
+        }
+        
+        // Search relative to executable
+        let execPath = CommandLine.arguments[0]
+        let execDir = (execPath as NSString).deletingLastPathComponent
+        
+        let candidates = [
+            (execDir as NSString).appendingPathComponent("../omniparser_icon_detect/model_v1_5.mlpackage"),
+            (execDir as NSString).appendingPathComponent("omniparser_icon_detect/model_v1_5.mlpackage"),
+            (execDir as NSString).appendingPathComponent("models/icon_detect_v1_5.mlpackage"),
+            NSString(string: "~/.application-use/models/icon_detect_v1_5.mlpackage").expandingTildeInPath,
+        ]
+        
+        for path in candidates {
+            if tryLoadModel(at: path) { return }
+        }
+    }
+    
+    private func tryLoadModel(at path: String) -> Bool {
+        let fm = FileManager.default
+        guard fm.fileExists(atPath: path) else { return false }
+        
+        let url = URL(fileURLWithPath: path)
+        
+        // Use a cached compiled model to avoid recompiling every time
+        let cacheDir = (NSTemporaryDirectory() as NSString).appendingPathComponent("application-use-icon-detect")
+        let compiledPath = (cacheDir as NSString).appendingPathComponent("icon_detect_v1_5.mlmodelc")
+        let compiledURL = URL(fileURLWithPath: compiledPath)
+        
+        var useCache = false
+        if fm.fileExists(atPath: compiledPath) {
+            if let srcAttrs = try? fm.attributesOfItem(atPath: path),
+               let cacheAttrs = try? fm.attributesOfItem(atPath: compiledPath),
+               let srcMod = srcAttrs[.modificationDate] as? Date,
+               let cacheMod = cacheAttrs[.modificationDate] as? Date {
+                useCache = cacheMod >= srcMod
+            }
+        }
+        
+        do {
+            let mlModel: MLModel
+            if useCache {
+                mlModel = try MLModel(contentsOf: compiledURL)
+            } else {
+                let tempCompiled = try MLModel.compileModel(at: url)
+                try? fm.createDirectory(atPath: cacheDir, withIntermediateDirectories: true)
+                try? fm.removeItem(at: compiledURL)
+                try fm.copyItem(at: tempCompiled, to: compiledURL)
+                mlModel = try MLModel(contentsOf: compiledURL)
+            }
+            vnModel = try VNCoreMLModel(for: mlModel)
+            return true
+        } catch {
+            fputs("IconDetector: Failed to load model at \(path): \(error)\n", stderr)
+            return false
+        }
+    }
+    
+    var isAvailable: Bool { vnModel != nil }
+    
+    func reset() {
+        cachedResults = []
+        hasPerformed = false
+    }
+    
+    func detectIcons(cgImage: CGImage, winFrame: NSRect) {
+        guard !hasPerformed else { return }
+        hasPerformed = true
+        guard let vnModel = vnModel else { return }
+        
+        let winX = winFrame.origin.x
+        let winY = winFrame.origin.y
+        let winW = winFrame.width
+        let winH = winFrame.height
+        
+        let semaphore = DispatchSemaphore(value: 0)
+        let request = VNCoreMLRequest(model: vnModel) { [weak self] req, error in
+            defer { semaphore.signal() }
+            guard let results = req.results as? [VNRecognizedObjectObservation] else { return }
+            
+            for observation in results {
+                let box = observation.boundingBox
+                // Vision normalized box: origin bottom-left, y-up, 0..1
+                // Convert to AX screen space (origin top-left, y-down)
+                let axX = winX + box.origin.x * winW
+                let axY = winY + (1.0 - box.origin.y - box.height) * winH
+                let axW = box.width * winW
+                let axH = box.height * winH
+                
+                let conf = observation.confidence
+                let frame = NSRect(x: axX, y: axY, width: axW, height: axH)
+                self?.cachedResults.append((confidence: conf, frame: frame))
+            }
+        }
+        request.imageCropAndScaleOption = .scaleFill
+        
+        let handler = VNImageRequestHandler(cgImage: cgImage, options: [:])
+        try? handler.perform([request])
+        semaphore.wait()
+    }
+    
+    func allResults(within targetFrame: NSRect) -> [(confidence: Float, frame: NSRect)] {
+        return cachedResults.filter { targetFrame.intersects($0.frame) }
+    }
+}
+
+// MARK: - Deduplication Helpers (IoU / Containment)
+
+func computeIntersectionArea(_ a: NSRect, _ b: NSRect) -> CGFloat {
+    let x1 = max(a.origin.x, b.origin.x)
+    let y1 = max(a.origin.y, b.origin.y)
+    let x2 = min(a.origin.x + a.width, b.origin.x + b.width)
+    let y2 = min(a.origin.y + a.height, b.origin.y + b.height)
+    if x2 <= x1 || y2 <= y1 { return 0 }
+    return (x2 - x1) * (y2 - y1)
+}
+
+func computeIoU(_ a: NSRect, _ b: NSRect) -> CGFloat {
+    let inter = computeIntersectionArea(a, b)
+    if inter == 0 { return 0 }
+    let unionArea = a.width * a.height + b.width * b.height - inter
+    if unionArea <= 0 { return 0 }
+    return inter / unionArea
+}
+
+func computeContainment(_ a: NSRect, _ b: NSRect) -> CGFloat {
+    let inter = computeIntersectionArea(a, b)
+    if inter == 0 { return 0 }
+    let smallerArea = min(a.width * a.height, b.width * b.height)
+    if smallerArea <= 0 { return 0 }
+    return inter / smallerArea
 }
 
 // MARK: - Element Extractor
@@ -495,6 +649,7 @@ func getFocusedCaretScreenRect() -> CGRect? {
 @_cdecl("trigger_appuse_snapshot")
 public func trigger_appuse_snapshot() -> UnsafeMutablePointer<CChar>? {
     ScreenOCR.shared.reset()
+    IconDetector.shared.reset()
     let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
     guard AXIsProcessTrustedWithOptions(options) else {
         return strdup("{\"error\": \"Accessibility permission denied\"}")
@@ -518,6 +673,10 @@ public func trigger_appuse_snapshot() -> UnsafeMutablePointer<CChar>? {
             ScreenOCR.shared.performWindowOCR(winFrame: rect)
             // OCR results are already filtered to be within rect by allResults(within:)
             ocrResults = ScreenOCR.shared.allResults(within: rect)
+            // Run icon detection on the same captured image
+            if let cgImage = ScreenOCR.shared.lastCapturedImage {
+                IconDetector.shared.detectIcons(cgImage: cgImage, winFrame: rect)
+            }
         }
     }
 
@@ -552,8 +711,29 @@ public func trigger_appuse_snapshot() -> UnsafeMutablePointer<CChar>? {
             filteredOCR.append(ocr)
         }
     }
-    
-    let totalCount = flatHintable.count + filteredOCR.count
+
+    // Icon detection results + dedup against AX elements (IoU >= 0.3 or containment >= 0.7)
+    var filteredIcons: [(confidence: Float, frame: NSRect)] = []
+    if let winRect = windowRect {
+        var iconResults = IconDetector.shared.allResults(within: winRect)
+        iconResults = iconResults.filter { winRect.contains($0.frame) }
+        for icon in iconResults {
+            var isDuplicate = false
+            for ax in flatHintable {
+                let iou = computeIoU(icon.frame, ax.frame)
+                let containment = computeContainment(icon.frame, ax.frame)
+                if iou >= 0.3 || containment >= 0.7 {
+                    isDuplicate = true
+                    break
+                }
+            }
+            if !isDuplicate {
+                filteredIcons.append(icon)
+            }
+        }
+    }
+
+    let totalCount = flatHintable.count + filteredOCR.count + filteredIcons.count
     let hintStrings = AlphabetHints.hintStrings(linkCount: totalCount)
 
     pendingHints = []
@@ -582,12 +762,28 @@ public func trigger_appuse_snapshot() -> UnsafeMutablePointer<CChar>? {
         currentHintIndex += 1
     }
 
+    // Assign hints to Icon elements
+    var iconJson: [[String: Any]] = []
+    for icon in filteredIcons {
+        let hintText = hintStrings[currentHintIndex]
+        let iconNode = [
+            "confidence": icon.confidence,
+            "hint": hintText,
+            "frame": ["x": icon.frame.origin.x, "y": icon.frame.origin.y, "width": icon.frame.width, "height": icon.frame.height]
+        ] as [String: Any]
+        iconJson.append(iconNode)
+        
+        pendingHints.append(Hint(frame: icon.frame, text: hintText))
+        currentHintIndex += 1
+    }
+
     // Return JSON now; overlay will be shown by show_appuse_overlay() after Go takes screenshots.
     var jsonDict: [String: Any] = [
         "appName": targetApp.localizedName ?? "Unknown",
         "bundleID": targetApp.bundleIdentifier ?? "",
         "elements": rootNodes.map { $0.toDict() },
-        "ocrElements": ocrJson
+        "ocrElements": ocrJson,
+        "iconElements": iconJson
     ]
     if let windowInfo = getFrontmostWindowInfo(appElement: appElement) {
         jsonDict["frontmostWindow"] = windowInfo

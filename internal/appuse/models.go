@@ -54,8 +54,20 @@ type SnapshotResponse struct {
 	Elements         []ElementNode   `json:"elements"`
 	FrontmostWindow  *BreadcrumbNode `json:"frontmostWindow"`
 	OCRElements      []OCRElement    `json:"ocrElements,omitempty"`
+	IconElements     []IconElement   `json:"iconElements,omitempty"`
 	Areas            []AreaNode      `json:"areas,omitempty"`
 	Caret            *CaretRect      `json:"caret,omitempty"`
+}
+
+type IconElement struct {
+	Confidence float64 `json:"confidence"`
+	Hint       string  `json:"hint"`
+	Frame      struct {
+		X      float64 `json:"x"`
+		Y      float64 `json:"y"`
+		Width  float64 `json:"width"`
+		Height float64 `json:"height"`
+	} `json:"frame"`
 }
 
 type AreaNode struct {
