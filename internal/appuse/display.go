@@ -24,10 +24,11 @@ type Rect struct {
 }
 
 type DisplayElement struct {
-	IsAX  bool
-	Hint  string
-	Name  string
-	Frame Rect
+	IsAX   bool
+	IsIcon bool
+	Hint   string
+	Name   string
+	Frame  Rect
 	// AX specific
 	Role                string
 	Label               string
@@ -172,6 +173,31 @@ func PrintSnapshot(jsonOutput string, debug bool) []AreaNode {
 		displayElements = append(displayElements, de)
 	}
 
+	for _, icon := range resp.IconElements {
+		// Filter icon elements outside window bounds
+		if icon.Frame.X < wx-1 || icon.Frame.Y < wy-1 ||
+			icon.Frame.X+icon.Frame.Width > wx+ww+1 ||
+			icon.Frame.Y+icon.Frame.Height > wy+wh+1 {
+			continue
+		}
+
+		// Convert screen points to window-relative pixels
+		px := (icon.Frame.X - wx) * scaleX
+		py := (icon.Frame.Y - wy) * scaleY
+		pw := icon.Frame.Width * scaleX
+		ph := icon.Frame.Height * scaleY
+
+		de := DisplayElement{
+			IsAX:                false,
+			IsIcon:              true,
+			Hint:                icon.Hint,
+			Name:                fmt.Sprintf("Icon (%.0f%%)", icon.Confidence*100),
+			OriginalFingerprint: getIconFingerprint(icon),
+		}
+		de.Frame.X, de.Frame.Y, de.Frame.Width, de.Frame.Height = px, py, pw, ph
+		displayElements = append(displayElements, de)
+	}
+
 	var areas []AreaNode
 	if len(displayElements) > 0 {
 		areas = printAreaHierarchy(img, imgBounds, displayElements, wx, wy, ww, wh, scaleX, scaleY, prevMap, debug)
@@ -226,6 +252,10 @@ func getFingerprint(node ElementNode) string {
 
 func getOCRFingerprint(ocr OCRElement) string {
 	return "OCR|" + ocr.Name
+}
+
+func getIconFingerprint(icon IconElement) string {
+	return fmt.Sprintf("ICON|%.0f,%.0f,%.0f,%.0f", icon.Frame.X, icon.Frame.Y, icon.Frame.Width, icon.Frame.Height)
 }
 
 type displayTreeNode struct {
@@ -309,7 +339,9 @@ func printAreaHierarchy(img image.Image, imgBounds image.Rectangle, elements []D
 	printElementNode = func(n *displayTreeNode, baseIndent, extraSpace string) {
 		e := n.e
 		ocrChar := " "
-		if !e.IsAX || strings.Contains(e.Name, " (via OCR)") {
+		if e.IsIcon {
+			ocrChar = "#"
+		} else if !e.IsAX || strings.Contains(e.Name, " (via OCR)") {
 			ocrChar = "*"
 		}
 		diffChar := " "
@@ -342,9 +374,12 @@ func printAreaHierarchy(img image.Image, imgBounds image.Rectangle, elements []D
 		// Draw bounding boxes for all elements
 		green := color.RGBA{0, 255, 0, 255}
 		yellow := color.RGBA{255, 255, 0, 255}
+		red := color.RGBA{255, 0, 0, 255}
 		for _, e := range elements {
 			c := green
-			if !e.IsAX {
+			if e.IsIcon {
+				c = red
+			} else if !e.IsAX {
 				c = yellow
 			}
 			drawRect(debugImg, e.Frame, c)

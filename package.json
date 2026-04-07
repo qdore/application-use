@@ -1,13 +1,17 @@
 {
-  "name": "application-use",
+  "name": "@saiting/application-use",
   "version": "0.1.2",
-  "description": "macOS Desktop Automation CLI for AI agents",
+  "description": "macOS Desktop Automation CLI for AI agents (with CoreML icon detection)",
   "type": "module",
   "files": [
-    "bin"
+    "bin",
+    "omniparser_icon_detect"
   ],
   "bin": {
     "application-use": "./bin/application-use.js"
+  },
+  "publishConfig": {
+    "access": "public"
   },
   "scripts": {
     "build": "make package-npm",
